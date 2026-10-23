@@ -5589,18 +5589,27 @@ double Box_ResolveTP(int signal, double price, double fallbackTP) {
    if(signal < 0 && target > 0.0 && target < price - minDist) return target;
    return fallbackTP;
 }
-
 int GetTradingSignal() {
     if(SignalSource == SIGNAL_INTERNAL_MA_ANGLE) {
         int sig = GetInternalMAAngleSignal();
         lastSignalUsed = sig;
         return sig;
     }
-    if(SignalSource == SIGNAL_COMPOSITE_SCORE) {   // v153
+
+    if(SignalSource == SIGNAL_COMPOSITE_SCORE) {
         int sig = GetCompositeSignal();
         lastSignalUsed = sig;
         return sig;
     }
+
+    if(SignalSource == SIGNAL_ICHIMOKU_BOX) {
+        int diagSignal = GetDiagonalTrendSignal();
+        if(diagSignal != 0)
+            return diagSignal;
+
+        return GetSignalFromGlobalVariable();
+    }
+
     return GetSignalFromGlobalVariable();
 }
 
@@ -6468,8 +6477,7 @@ if(processSignal && effectiveSignal != 0) {
             FilterLog("Signal rejected by filters: " + lastTradeFailureReason);
         }   }    
     lastSignalUsed = effectiveSignal;
-}  
- }
+}   }
 
 struct DiagonalTrendState
 {
@@ -6490,29 +6498,28 @@ void BuildDiagonalTrendState(int tenkanBars, int kijunBars, DiagonalTrendState &
    s.valid = false;
 
    int bars = MathMax(tenkanBars, kijunBars) + 30;
-   double H[], L[], T[];
-   ArraySetAsSeries(H, true);
-   ArraySetAsSeries(L, true);
-   ArraySetAsSeries(T, true);
+   MqlRates rates[];
+   ArraySetAsSeries(rates, true);
 
-   if(CopyHigh(_Symbol, _Period, 0, bars, H) < bars) return;
-   if(CopyLow(_Symbol, _Period, 0, bars, L) < bars) return;
-   if(CopyTime(_Symbol, _Period, 0, bars, T) < bars) return;
+   if(CopyRates(_Symbol, _Period, 0, bars, rates) < bars)
+      return;
 
-   double kHigh = H[0];
-   double kLow  = L[0];
+   double kHigh = rates[0].high;
+   double kLow  = rates[0].low;
+
    for(int i = 1; i < kijunBars && i < bars; i++)
    {
-      if(H[i] > kHigh) kHigh = H[i];
-      if(L[i] < kLow)  kLow  = L[i];
+      if(rates[i].high > kHigh) kHigh = rates[i].high;
+      if(rates[i].low  < kLow)  kLow  = rates[i].low;
    }
 
-   double tHigh = H[0];
-   double tLow  = L[0];
+   double tHigh = rates[0].high;
+   double tLow  = rates[0].low;
+
    for(int i = 1; i < tenkanBars && i < bars; i++)
    {
-      if(H[i] > tHigh) tHigh = H[i];
-      if(L[i] < tLow)  tLow  = L[i];
+      if(rates[i].high > tHigh) tHigh = rates[i].high;
+      if(rates[i].low  < tLow)  tLow  = rates[i].low;
    }
 
    s.kijunHigh = kHigh;
@@ -6520,16 +6527,15 @@ void BuildDiagonalTrendState(int tenkanBars, int kijunBars, DiagonalTrendState &
    s.tenkanHigh = tHigh;
    s.tenkanLow  = tLow;
 
-   s.tLeft = T[kijunBars - 1];
+   s.tLeft = rates[kijunBars - 1].time;
    s.yLeft = kHigh;
 
-   s.tRight = T[0];
+   s.tRight = rates[0].time;
    s.yRight = MathMin(kLow, tLow);
 
    double dx = (double)(s.tRight - s.tLeft);
    if(dx == 0.0)
    {
-      s.slope = 0.0;
       s.valid = false;
       return;
    }
@@ -6578,132 +6584,9 @@ int GetDiagonalTrendSignal()
    if(!IsTenkanKijunAligned(tenkanBars, kijunBars))
       return 0;
 
-   double currentPrice = Close[0];
-   double linePriceNow = DiagonalLineValueAtTime(Time[0], s.tLeft, s.yLeft, s.tRight, s.yRight);
-
-   if(s.slope > 0.0)
-   {
-      if(currentPrice > linePriceNow)
-         return 1;
-   }
-   else if(s.slope < 0.0)
-   {
-      if(currentPrice < linePriceNow)
-         return -1;
-   }
-
-   return 0;
-}
-
-struct DiagonalTrendState
-{
-   double kijunHigh;
-   double kijunLow;
-   double tenkanHigh;
-   double tenkanLow;
-   datetime tLeft;
-   double yLeft;
-   datetime tRight;
-   double yRight;
-   double slope;
-   bool valid;
-};
-
-void BuildDiagonalTrendState(int tenkanBars, int kijunBars, DiagonalTrendState &s)
-{
-   s.valid = false;
-
-   int bars = MathMax(tenkanBars, kijunBars) + 30;
-   double H[], L[], T[];
-   ArraySetAsSeries(H, true);
-   ArraySetAsSeries(L, true);
-   ArraySetAsSeries(T, true);
-
-   if(CopyHigh(_Symbol, _Period, 0, bars, H) < bars) return;
-   if(CopyLow(_Symbol, _Period, 0, bars, L) < bars) return;
-   if(CopyTime(_Symbol, _Period, 0, bars, T) < bars) return;
-
-   double kHigh = H[0];
-   double kLow  = L[0];
-   for(int i = 1; i < kijunBars && i < bars; i++)
-   {
-      if(H[i] > kHigh) kHigh = H[i];
-      if(L[i] < kLow)  kLow  = L[i];
-   }
-
-   double tHigh = H[0];
-   double tLow  = L[0];
-   for(int i = 1; i < tenkanBars && i < bars; i++)
-   {
-      if(H[i] > tHigh) tHigh = H[i];
-      if(L[i] < tLow)  tLow  = L[i];
-   }
-
-   s.kijunHigh = kHigh;
-   s.kijunLow  = kLow;
-   s.tenkanHigh = tHigh;
-   s.tenkanLow  = tLow;
-
-   s.tLeft = T[kijunBars - 1];
-   s.yLeft = kHigh;
-
-   s.tRight = T[0];
-   s.yRight = MathMin(kLow, tLow);
-
-   double dx = (double)(s.tRight - s.tLeft);
-   if(dx == 0.0)
-   {
-      s.slope = 0.0;
-      s.valid = false;
-      return;
-   }
-
-   s.slope = (s.yRight - s.yLeft) / dx;
-   s.valid = true;
-}
-
-double DiagonalLineValueAtTime(datetime t, datetime t1, double y1, datetime t2, double y2)
-{
-   double dx = (double)(t2 - t1);
-   if(dx == 0.0) return y1;
-
-   double slope = (y2 - y1) / dx;
-   return y1 + slope * (double)(t - t1);
-}
-
-bool IsTenkanKijunAligned(int tenkanBars, int kijunBars)
-{
-   DiagonalTrendState s;
-   BuildDiagonalTrendState(tenkanBars, kijunBars, s);
-
-   if(!s.valid)
-      return false;
-
-   if(s.slope > 0.0)
-      return (s.tenkanHigh >= s.kijunHigh * 0.995);
-
-   if(s.slope < 0.0)
-      return (s.tenkanLow <= s.kijunLow * 1.005);
-
-   return false;
-}
-
-int GetDiagonalTrendSignal()
-{
-   int tenkanBars = 8;
-   int kijunBars  = 25;
-
-   DiagonalTrendState s;
-   BuildDiagonalTrendState(tenkanBars, kijunBars, s);
-
-   if(!s.valid)
-      return 0;
-
-   if(!IsTenkanKijunAligned(tenkanBars, kijunBars))
-      return 0;
-
-   double currentPrice = Close[0];
-   double linePriceNow = DiagonalLineValueAtTime(Time[0], s.tLeft, s.yLeft, s.tRight, s.yRight);
+   double currentPrice = iClose(_Symbol, _Period, 0);
+   datetime now = iTime(_Symbol, _Period, 0);
+   double linePriceNow = DiagonalLineValueAtTime(now, s.tLeft, s.yLeft, s.tRight, s.yRight);
 
    if(s.slope > 0.0)
    {
@@ -7130,141 +7013,17 @@ void ProcessHeavyTasks() {
     }
 }
 
-struct DiagonalTrendState
-{
-   double kijunHigh;
-   double kijunLow;
-   double tenkanHigh;
-   double tenkanLow;
-   datetime tLeft;
-   double yLeft;
-   datetime tRight;
-   double yRight;
-   double slope;
-   bool valid;
-};
 
-void BuildDiagonalTrendState(int tenkanBars, int kijunBars, DiagonalTrendState &s)
-{
-   s.valid = false;
-
-   int bars = MathMax(tenkanBars, kijunBars) + 30;
-   double H[], L[], T[];
-   ArraySetAsSeries(H, true);
-   ArraySetAsSeries(L, true);
-   ArraySetAsSeries(T, true);
-
-   if(CopyHigh(_Symbol, _Period, 0, bars, H) < bars) return;
-   if(CopyLow(_Symbol, _Period, 0, bars, L) < bars) return;
-   if(CopyTime(_Symbol, _Period, 0, bars, T) < bars) return;
-
-   double kHigh = H[0];
-   double kLow  = L[0];
-   for(int i = 1; i < kijunBars && i < bars; i++)
-   {
-      if(H[i] > kHigh) kHigh = H[i];
-      if(L[i] < kLow)  kLow  = L[i];
-   }
-
-   double tHigh = H[0];
-   double tLow  = L[0];
-   for(int i = 1; i < tenkanBars && i < bars; i++)
-   {
-      if(H[i] > tHigh) tHigh = H[i];
-      if(L[i] < tLow)  tLow  = L[i];
-   }
-
-   s.kijunHigh = kHigh;
-   s.kijunLow  = kLow;
-   s.tenkanHigh = tHigh;
-   s.tenkanLow  = tLow;
-
-   s.tLeft = T[kijunBars - 1];
-   s.yLeft = kHigh;
-
-   s.tRight = T[0];
-   s.yRight = MathMin(kLow, tLow);
-
-   double dx = (double)(s.tRight - s.tLeft);
-   if(dx == 0.0)
-   {
-      s.slope = 0.0;
-      s.valid = false;
-      return;
-   }
-
-   s.slope = (s.yRight - s.yLeft) / dx;
-   s.valid = true;
-}
-
-double DiagonalLineValueAtTime(datetime t, datetime t1, double y1, datetime t2, double y2)
-{
-   double dx = (double)(t2 - t1);
-   if(dx == 0.0) return y1;
-
-   double slope = (y2 - y1) / dx;
-   return y1 + slope * (double)(t - t1);
-}
-
-bool IsTenkanKijunAligned(int tenkanBars, int kijunBars)
-{
-   DiagonalTrendState s;
-   BuildDiagonalTrendState(tenkanBars, kijunBars, s);
-
-   if(!s.valid)
-      return false;
-
-   if(s.slope > 0.0)
-      return (s.tenkanHigh >= s.kijunHigh * 0.995);
-
-   if(s.slope < 0.0)
-      return (s.tenkanLow <= s.kijunLow * 1.005);
-
-   return false;
-}
-
-int GetDiagonalTrendSignal()
-{
-   int tenkanBars = 8;
-   int kijunBars  = 25;
-
-   DiagonalTrendState s;
-   BuildDiagonalTrendState(tenkanBars, kijunBars, s);
-
-   if(!s.valid)
-      return 0;
-
-   if(!IsTenkanKijunAligned(tenkanBars, kijunBars))
-      return 0;
-
-   double currentPrice = Close[0];
-   double linePriceNow = DiagonalLineValueAtTime(Time[0], s.tLeft, s.yLeft, s.tRight, s.yRight);
-
-   if(s.slope > 0.0)
-   {
-      if(currentPrice > linePriceNow)
-         return 1;
-   }
-   else if(s.slope < 0.0)
-   {
-      if(currentPrice < linePriceNow)
-         return -1;
-   }
-
-   return 0;
-}
 //+------------------------------------------------------------------+
 //| Expert Tick Function                                             |
 //+------------------------------------------------------------------+
 void OnTick() {
-
- int sigDiag = GetDiagonalTrendSignal();
+  int sigDiag = GetDiagonalTrendSignal();
 
    if(sigDiag > 0)
       Print("TEST BUY by diagonal trend method");
    else if(sigDiag < 0)
       Print("TEST SELL by diagonal trend method");
-
       static datetime lastFullCheck = 0;
 
     UpdateIndependentATR();
